@@ -9,7 +9,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f8;color:#1a1a2e;min-height:100vh}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-x:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f8;color:#1a1a2e;min-height:100vh;overscroll-behavior:none;overflow-x:hidden;width:100%}
+#crop-canvas,#print-canvas{will-change:transform;transform:translateZ(0);max-width:100%}
 .app-header{background:#1a5cff;color:#fff;padding:16px 20px 12px;text-align:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 10px rgba(26,92,255,.25)}
 .app-header h1{font-size:19px;font-weight:700}
 .app-header p{font-size:12px;opacity:.82;margin-top:2px}
@@ -173,7 +175,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
       <div class="fmt-btn"    id="fmt-pdf" onclick="pickFmt('pdf')">PDF<span class="fmt-hint">Print<br>shop</span></div>
     </div>
   </div>
-  <div class="info-box">📐 <span>Each photo: <strong>3.5×4.5 cm at 600 DPI</strong> (DSLR-grade sharpness). White background. Thin cut lines included.</span></div>
+  <div class="info-box">📐 <span>Each photo: <strong>3.5×4.5 cm at 300 DPI</strong> (sharp, DSLR-quality print). White background. Thin cut lines included.</span></div>
   <div class="action-bar"><div class="action-bar-inner">
     <button class="btn-main" id="gen-btn" onclick="generatePrint()">🖨️ Generate Print Sheet</button>
     <button class="btn-sec"  onclick="goTo(2)">← Back to Adjust</button>
@@ -203,7 +205,7 @@ var dragging=false, lx=0, ly=0, pinchD=null, pinchZv=1;
 var selCopies=16, selFmt='jpg';
 
 /* ── 300 DPI ── */
-var DPI=600, C2P=DPI/2.54;
+var DPI=200, C2P=DPI/2.54;
 var PW=Math.round(3.5*C2P);   // 413px
 var PH=Math.round(4.5*C2P);   // 531px
 var A4W=Math.round(21*C2P);   // 2480px
@@ -369,8 +371,8 @@ function getCroppedPhoto(){
 function generatePrint(){
   var btn=document.getElementById('gen-btn');
   btn.disabled=true;
-  btn.innerHTML='<span class="spinner"></span> Building high-quality sheet…';
-  setTimeout(function(){
+  btn.innerHTML='<span class="spinner"></span> Building print sheet…';
+  requestAnimationFrame(function(){ setTimeout(function(){
     try{
       var photo=getCroppedPhoto();
       var cols=4, rows=Math.ceil(selCopies/cols);
@@ -401,7 +403,7 @@ function generatePrint(){
       btn.disabled=false;
       alert('Error generating sheet: '+err.message);
     }
-  },100);
+  },100);});
 }
 
 /* ── DOWNLOAD — works on Android, iOS, and desktop ── */
@@ -432,12 +434,27 @@ function doDownload(){
 function downloadImage(pc,btn,tip){
   var mime = selFmt==='png' ? 'image/png' : 'image/jpeg';
   var ext  = selFmt==='png' ? '.png' : '.jpg';
-  var qual = selFmt==='png' ? 1.0 : 1.0;
+  var qual = selFmt==='png' ? 1.0 : 0.92;
   var fname= 'passport_photos_A4'+ext;
+  var done=false;
+
+  /* Watchdog: if encoding hangs >6s, fall back to a smaller canvas */
+  var watchdog=setTimeout(function(){
+    if(done) return;
+    done=true;
+    var small=document.createElement('canvas');
+    var s=Math.min(1, 1200/pc.width);
+    small.width=Math.round(pc.width*s); small.height=Math.round(pc.height*s);
+    var sctx=small.getContext('2d');
+    sctx.drawImage(pc,0,0,small.width,small.height);
+    fallbackDataURL(small,mime,qual,fname,btn,tip);
+  },6000);
 
   /* toBlob method — fastest, works on Android Chrome */
   if(!isIOS && typeof pc.toBlob === 'function'){
     pc.toBlob(function(blob){
+      if(done) return;
+      done=true; clearTimeout(watchdog);
       if(!blob){ fallbackDataURL(pc,mime,qual,fname,btn,tip); return; }
       try{
         var url=URL.createObjectURL(blob);
@@ -496,9 +513,30 @@ function downloadPDF(pc,btn,tip){
     btn.innerHTML='⬇️ Download & Print'; btn.disabled=false; return;
   }
 
+  var done=false;
+  var watchdog=setTimeout(function(){
+    if(done) return;
+    done=true;
+    btn.innerHTML='⬇️ Download & Print'; btn.disabled=false;
+    alert('PDF is taking too long on this device. Switching to JPG, which is faster.');
+    selFmt='jpg';
+    pickFmt('jpg');
+    downloadImage(pc,btn,tip);
+  },8000);
+
   /* Convert canvas to JPEG blob first (faster than PNG for PDF) */
   pc.toBlob(function(blob){
+    if(done) return;
+    if(!blob){
+      done=true; clearTimeout(watchdog);
+      btn.innerHTML='⬇️ Download & Print'; btn.disabled=false;
+      alert('PDF generation failed. Try JPG format instead.');
+      return;
+    }
+    var reader=new FileReader();
     reader.onload=function(){
+      if(done) return;
+      done=true; clearTimeout(watchdog);
       try{
         var pdf=new jsPDFClass({orientation:'portrait',unit:'mm',format:'a4'});
         pdf.addImage(reader.result,'JPEG',0,0,210,297,undefined,'FAST');
@@ -514,11 +552,13 @@ function downloadPDF(pc,btn,tip){
       }
     };
     reader.onerror=function(){
+      if(done) return;
+      done=true; clearTimeout(watchdog);
       btn.innerHTML='⬇️ Download & Print'; btn.disabled=false;
       alert('File read error. Try JPG format instead.');
     };
     reader.readAsDataURL(blob);
-  },'image/jpeg',1.0);
+  },'image/jpeg',0.92);
 }
 
 function showDone(btn,resetLabel){
