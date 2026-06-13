@@ -220,7 +220,8 @@ var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     rd.onload=function(ev){
       var im=new Image();
       im.onload=function(){
-        userImg=im; rot=0; zv=1; bv=1; px=0; py=0;
+        userImg=downscaleImage(im,1600);
+        rot=0; zv=1; bv=1; px=0; py=0;
         document.getElementById('zoom-sl').value=1;
         document.getElementById('bright-sl').value=1;
         document.getElementById('zoom-v').textContent='1.0×';
@@ -233,6 +234,20 @@ var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     rd.readAsDataURL(f);
   });
 });
+
+/* ── Downscale large camera/DSLR images so crop UI stays smooth ── */
+function downscaleImage(im,maxDim){
+  var w=im.width,h=im.height;
+  if(Math.max(w,h)<=maxDim) return im;
+  var sc=maxDim/Math.max(w,h);
+  var c=document.createElement('canvas');
+  c.width=Math.round(w*sc); c.height=Math.round(h*sc);
+  var ctx=c.getContext('2d');
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
+  ctx.drawImage(im,0,0,c.width,c.height);
+  return c;
+}
 
 /* ── Navigation ── */
 function goTo(n){
@@ -283,9 +298,16 @@ function drawCrop(){
   cx.restore(); cx.filter='none';
 }
 
-document.getElementById('zoom-sl').addEventListener('input',function(){zv=parseFloat(this.value);document.getElementById('zoom-v').textContent=zv.toFixed(1)+'×';drawCrop();});
-document.getElementById('bright-sl').addEventListener('input',function(){bv=parseFloat(this.value);document.getElementById('bright-v').textContent=bv.toFixed(1);drawCrop();});
+document.getElementById('zoom-sl').addEventListener('input',function(){zv=parseFloat(this.value);document.getElementById('zoom-v').textContent=zv.toFixed(1)+'×';reqDraw();});
+document.getElementById('bright-sl').addEventListener('input',function(){bv=parseFloat(this.value);document.getElementById('bright-v').textContent=bv.toFixed(1);reqDraw();});
 function rotImg(d){rot=(rot+d+360)%360;drawCrop();}
+
+var rafPending=false;
+function reqDraw(){
+  if(rafPending) return;
+  rafPending=true;
+  requestAnimationFrame(function(){rafPending=false;drawCrop();});
+}
 
 cc.addEventListener('mousedown',function(e){dragging=true;lx=e.clientX;ly=e.clientY;e.preventDefault();});
 cc.addEventListener('touchstart',function(e){
@@ -297,17 +319,17 @@ cc.addEventListener('touchstart',function(e){
     dragging=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;
   }
 },{passive:true});
-window.addEventListener('mousemove',function(e){if(!dragging)return;px+=e.clientX-lx;py+=e.clientY-ly;lx=e.clientX;ly=e.clientY;drawCrop();});
+window.addEventListener('mousemove',function(e){if(!dragging)return;px+=e.clientX-lx;py+=e.clientY-ly;lx=e.clientX;ly=e.clientY;reqDraw();});
 window.addEventListener('touchmove',function(e){
   if(e.touches.length===2 && pinchD){
     var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
     zv=Math.max(0.5,Math.min(4, pinchZv*(d/pinchD)));
     document.getElementById('zoom-sl').value=zv;
     document.getElementById('zoom-v').textContent=zv.toFixed(1)+'×';
-    drawCrop();
+    reqDraw();
     return;
   }
-  if(!dragging)return;px+=e.touches[0].clientX-lx;py+=e.touches[0].clientY-ly;lx=e.touches[0].clientX;ly=e.touches[0].clientY;drawCrop();
+  if(!dragging)return;px+=e.touches[0].clientX-lx;py+=e.touches[0].clientY-ly;lx=e.touches[0].clientX;ly=e.touches[0].clientY;reqDraw();
 },{passive:true});
 window.addEventListener('mouseup',function(){dragging=false;});
 window.addEventListener('touchend',function(e){dragging=false;pinchD=null;});
